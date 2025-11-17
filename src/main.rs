@@ -1,10 +1,33 @@
 use std::io::{Read, Write, self, BufRead};
 use std::net::{TcpListener, TcpStream};
-use aes::Aes256;
-use aes::cipher::{
-    BlockCipher, BlockEncrypt, BlockDecrypt, KeyInit,
-    generic_array::GenericArray, 
+use aes_gcm::{
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    Aes256Gcm, Nonce, Key
 };
+
+fn send_encrypted(stream: &mut TcpStream, cipher: &Aes256Gcm, message: &str) -> std::io::Result<()> {
+    let encrypted = encrypt_message(cipher, message)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    
+    let length = encrypted.len() as u32;
+    stream.write_all(&length.to_be_bytes())?;
+    
+    stream.write_all(&encrypted)?;
+    stream.flush()?;
+    
+    Ok(())
+}
+
+fn encrypt_ses(cipher: &Aes256Gcm, message: &str) -> -> Result<Vec<u8>, String> {
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let encrypted = cipher.encrypt(&nonce, message.as_bytes()).map_err(|e| format!("Encryption failed: {:?}", e))?;
+
+    let mut result = Vec::new();
+    result.extend_from_slice(&nonce);
+    result.extend_from_slice(&ciphertext);
+
+    Ok(result)
+}
 
 fn chat_set(stream: TcpStream) {
     let read_stream = stream.try_clone().expect("Failed to clone");
@@ -28,7 +51,7 @@ fn chat_set(stream: TcpStream) {
             }
         }
     });
-
+    
     // Main thread writes from keyboard
     let stdin = io::stdin();
     println!("Start chatting (Ctrl+C to exit):\n");
@@ -36,12 +59,8 @@ fn chat_set(stream: TcpStream) {
     for line in stdin.lock().lines() {
         match line {
             Ok(message) => {
-                if write_stream.write_all(message.as_bytes()).is_err() {
-                    println!("Failed to send message");
-                    break;
-                }
-                if write_stream.write_all(b"\n").is_err() {
-                    println!("Failed to send newline");
+                if let Err(e) = send_encrypted(&mut write_stream, &cipher, &message) {
+                    println!("Failed to send message: {}", e);
                     break;
                 }
             }
